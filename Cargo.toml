@@ -1,0 +1,12 @@
+[package]
+name = "rustme"
+version = "0.1.0"
+edition = "2021"
+
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.5"
+ron = "0.7"
+thiserror = "1"
+ureq = "2"

@@ -1,0 +1,12 @@
+Configuration(
+    files: {
+        "../README.md": (
+            sections: [
+                "header.md",
+                "docs.md",
+                "generated.md",
+                "https://github.com/khonsulabs/.github/raw/main/snippets/readme-footer.md",
+            ]
+        ),
+    }
+)
