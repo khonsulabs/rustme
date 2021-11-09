@@ -27,6 +27,8 @@ has specific features that are useful for Rust projects:
 
 ## `rustme` command line interface
 
+To install, simply run `cargo install rustme`.
+
 Currently `rustme` ignores all command line arguments. It looks for a
 [Ron](https://github.com/ron-rs/ron)-formatted `Configuration` located in either
 `./rustme.ron` or `./.rustme/config.ron`, and generates the files relative to
