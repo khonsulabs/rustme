@@ -1,1 +1,1 @@
-initSidebarItems({"enum":[["Error",""],["Glossary",""]],"struct":[["Configuration",""],["RustMe",""]]});
+initSidebarItems({"enum":[["Error","All errors that `rustme` can return."],["Glossary","A mapping of replacements that can be used within the files using `$name$` syntax."]],"struct":[["Configuration","A configuration of how to generate one or more READMEs."]]});
