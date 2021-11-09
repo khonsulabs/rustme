@@ -8,8 +8,11 @@ This is the content section. You can also bring snippets inline:
 
 ```rust
 let config = rustme::Configuration::load("./examples/basic/.rustme.ron").unwrap();
-config.generate(Path::new("./examples/basic")).unwrap();
+config.generate().unwrap();
 ```
+
+Additionally, glossaries can be used to include repeated values easily, such as
+[urls to homepages](https://khonsulabs.com/).
 
 ## Open-source Licenses
 

@@ -5,10 +5,8 @@ use self::rustme::Configuration;
 pub mod rustme;
 
 fn main() -> Result<(), rustme::Error> {
-    let config_path = config_path();
-    let config_directory = config_path.parent().unwrap();
-    let config = Configuration::load(config_path)?;
-    config.generate(config_directory)?;
+    let config = Configuration::load(config_path())?;
+    config.generate()?;
 
     Ok(())
 }

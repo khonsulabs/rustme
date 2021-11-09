@@ -2,7 +2,11 @@
 name = "rustme"
 version = "0.1.0"
 edition = "2021"
-
+license = "MIT OR Apache-2.0"
+description = "Automatically generate Rusty READMEs"
+categories = ["development-tools"]
+keywords = ["readme", "markdown"]
+repository = "https://github.com/khonsulabs/rustme"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

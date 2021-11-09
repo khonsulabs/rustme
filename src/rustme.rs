@@ -1,56 +1,115 @@
-use std::{collections::HashMap, fs::File, io::Write, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs::File,
+    io::{ErrorKind, Write},
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 
+/// A configuration of how to generate one or more READMEs.
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Configuration {
-    pub files: HashMap<String, RustMe>,
+    /// The location that paths should be resolved relative to.
+    #[serde(skip)]
+    pub relative_to: PathBuf,
+    /// The collection of files (key) and sections (values).
+    pub files: HashMap<String, Vec<String>>,
+    /// A list of glossaries that act as a source of snippets.
     #[serde(default)]
     pub glossaries: Vec<Glossary>,
 }
 
 impl Configuration {
+    /// Attempts to load a configuration from `path`.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Io`]: Returned if an error occurs interacting with the
+    ///   filesystem.
+    /// - [`Error::Ron`]: Returned if an error occurs while parsing the
+    ///   configuration file.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
-        let contents = std::fs::read_to_string(path)?;
-        let configuration = ron::from_str(&contents)?;
+        let contents = std::fs::read_to_string(path.as_ref())?;
+        let mut configuration = ron::from_str::<Self>(&contents)?;
+        configuration.relative_to = path
+            .as_ref()
+            .parent()
+            .ok_or_else(|| Error::Io(std::io::Error::from(ErrorKind::NotFound)))?
+            .to_path_buf();
         Ok(configuration)
     }
 
-    pub fn generate(&self, base_dir: &Path) -> Result<(), Error> {
+    /// Generates the README files.
+    ///
+    /// # Errors
+    ///
+    /// Can return various errors that are encountred with files that could not
+    /// be parsed.
+    pub fn generate(&self) -> Result<(), Error> {
         let mut snippets = HashMap::new();
-        for (name, file) in &self.files {
-            let output_path = base_dir.join(name);
+        let glossary = self.load_glossaries()?;
+        for (name, sections) in &self.files {
+            let output_path = self.relative_to.join(name);
             if output_path.exists() {
                 std::fs::remove_file(&output_path)?;
             }
 
             let mut output = File::create(&output_path)?;
-            for (index, section) in file.sections.iter().enumerate() {
+            for (index, section) in sections.iter().enumerate() {
                 if index > 0 {
                     output.write_all(b"\n")?;
                 }
-                if section.starts_with("http://") || section.starts_with("https://") {
-                    let body: String = ureq::get(section)
+                let markdown = if section.starts_with("http://") || section.starts_with("https://")
+                {
+                    ureq::get(section)
                         .set("User-Agent", "RustMe")
                         .call()?
-                        .into_string()?;
-                    output.write_all(body.as_bytes())?;
+                        .into_string()?
                 } else {
-                    let markdown = std::fs::read_to_string(base_dir.join(section))?;
-                    let processed = process_markdown(&markdown, base_dir, &mut snippets)?;
-                    output.write_all(processed.as_bytes())?;
-                }
+                    std::fs::read_to_string(self.relative_to.join(section))?
+                };
+                let processed =
+                    process_markdown(&markdown, &self.relative_to, &mut snippets, &glossary)?;
+                output.write_all(processed.as_bytes())?;
             }
         }
 
         Ok(())
     }
+
+    fn load_glossaries(&self) -> Result<HashMap<String, String>, Error> {
+        let mut combined = HashMap::new();
+
+        for glossary in &self.glossaries {
+            match glossary {
+                Glossary::External(url) => {
+                    let glossary_text = ureq::get(url)
+                        .set("User-Agent", "RustMe")
+                        .call()?
+                        .into_string()?;
+                    let glossary = ron::from_str::<BTreeMap<String, String>>(&glossary_text)?;
+                    for (key, value) in glossary {
+                        combined.insert(key, value);
+                    }
+                }
+                Glossary::Inline(glossary) => {
+                    for (key, value) in glossary {
+                        combined.insert(key.to_string(), value.to_string());
+                    }
+                }
+            }
+        }
+
+        Ok(combined)
+    }
 }
 
-fn include_snippets(
+fn replace_references(
     markdown: &str,
     base_dir: &Path,
     snippets: &mut HashMap<String, String>,
+    glossary: &HashMap<String, String>,
 ) -> Result<String, Error> {
     let mut processed = String::with_capacity(markdown.len());
     let mut chars = StrByteIterator::new(markdown);
@@ -65,13 +124,15 @@ fn include_snippets(
         }
 
         let snippet_ref = chars.read_until_char(b'$');
-        // Skip the $
+        // Skip the trailing $
         if chars.next().is_none() {
             return Err(Error::MalformedCodeBlock);
         }
         if snippet_ref.is_empty() {
             // An escaped dollar sign
             processed.push('$');
+        } else if let Some(value) = glossary.get(snippet_ref) {
+            processed.push_str(value);
         } else {
             let snippet = load_snippet(snippet_ref, base_dir, snippets)?;
             processed.push_str(snippet);
@@ -124,8 +185,9 @@ fn process_markdown(
     markdown: &str,
     base_dir: &Path,
     snippets: &mut HashMap<String, String>,
+    glossary: &HashMap<String, String>,
 ) -> Result<String, Error> {
-    let expanded = include_snippets(markdown, base_dir, snippets)?;
+    let expanded = replace_references(markdown, base_dir, snippets, glossary)?;
     preprocess_rust_codeblocks(&expanded)
 }
 
@@ -211,7 +273,7 @@ struct StrByteIterator<'a> {
 }
 
 impl<'a> StrByteIterator<'a> {
-    pub fn new(value: &'a str) -> Self {
+    pub const fn new(value: &'a str) -> Self {
         Self { remaining: value }
     }
 
@@ -270,14 +332,14 @@ impl<'a> Iterator for StrByteIterator<'a> {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug)]
-pub struct RustMe {
-    pub sections: Vec<String>,
-}
-
+/// A mapping of replacements that can be used within the files using `$name$`
+/// syntax.
 #[derive(Deserialize, Serialize, Debug)]
 pub enum Glossary {
+    /// An external glossary. The contained value should be a valid Url to a
+    /// Ron-encoded `HashMap<String, String>`.
     External(String),
+    /// An inline glossary.
     Inline(HashMap<String, String>),
 }
 
@@ -287,12 +349,8 @@ fn test_no_glossary() {
         r#"
         Configuration(
             files: {
-                "README.md": (
-                    sections: ["a", "b"]
-                ),
-                "OTHERREADME.md": (
-                    sections: ["a", "b"]
-                )
+                "README.md": ["a", "b"],
+                "OTHERREADME.md": ["a", "b"],
             }
         )
         "#,
@@ -301,24 +359,55 @@ fn test_no_glossary() {
     println!("Parsed: {:?}", configuration);
 }
 
+#[test]
+fn test_glossary() {
+    let configuration: Configuration = ron::from_str(
+        r#"
+        Configuration(
+            files: {
+                "README.md": ["a", "b"],
+                "OTHERREADME.md": ["a", "b"],
+            },
+            glossaries: [
+                Inline({
+                    "TEST": "SUCCESS",
+                })
+            ]
+        )
+        "#,
+    )
+    .unwrap();
+    println!("Parsed: {:?}", configuration);
+}
+
+/// All errors that `rustme` can return.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// A snippet reference is missing its closing `$`.
     #[error("A snippet reference is missing its closing $")]
     MalformedSnippetReference,
+    /// A mismatch of snippet begins and ends.
     #[error("A mismatch of snippet begins and ends")]
     MalformedSnippet,
+    /// A rust code block was not able to be parsed.
     #[error("A rust code block was not able to be parsed")]
     MalformedCodeBlock,
+    /// A snippet was already defined.
     #[error("snippet already defined: {0}")]
     SnippetAlreadyDefined(String),
+    /// A snippet was not found.
     #[error("snippet not found: {0}")]
     SnippetNotFound(String),
+    /// A snippet was begun but not ended.
     #[error("snippet end not missing")]
     SnippetEndNotFound,
+    /// An I/O error occurred.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    /// A [Ron](https://github.com/ron-rs/ron) error.
     #[error("ron error: {0}")]
     Ron(#[from] ron::Error),
+    /// An error requesting an Http resource.
     #[error("http error: {0}")]
     Http(#[from] ureq::Error),
 }
