@@ -10,7 +10,6 @@ repository = "https://github.com/khonsulabs/rustme"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-toml = "0.5"
 ron = "0.7"
 thiserror = "1"
 ureq = "2"
