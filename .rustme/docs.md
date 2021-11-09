@@ -33,7 +33,7 @@ the configuration file.
 ## `rustme` as a library
 
 ```rust
-# This line will not show up in rustdoc or in the generated README.
+# // This line will not show up in rustdoc or in the generated README.
 let config = rustme::Configuration::load("examples/basic/.rustme.ron").unwrap();
 config.generate().unwrap();
 ```
