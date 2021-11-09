@@ -3,6 +3,8 @@ use std::{
     fs::File,
     io::{ErrorKind, Write},
     path::{Path, PathBuf},
+    str::Utf8Error,
+    string::FromUtf8Error,
 };
 
 use serde::{Deserialize, Serialize};
@@ -111,74 +113,74 @@ fn replace_references(
     snippets: &mut HashMap<String, String>,
     glossary: &HashMap<String, String>,
 ) -> Result<String, Error> {
-    let mut processed = String::with_capacity(markdown.len());
+    let mut processed = Vec::with_capacity(markdown.len());
     let mut chars = StrByteIterator::new(markdown);
     loop {
-        let skipped = chars.read_until_char(b'$');
+        let skipped = chars.read_until_char(b'$')?;
         if !skipped.is_empty() {
-            processed.push_str(skipped);
+            processed.extend(skipped.bytes());
         }
         // Skip the $, or exit if one wasn't found.
         if chars.next().is_none() {
             break;
         }
 
-        let snippet_ref = chars.read_until_char(b'$');
+        let snippet_ref = chars.read_until_char(b'$')?;
         // Skip the trailing $
         if chars.next().is_none() {
             return Err(Error::MalformedCodeBlock);
         }
         if snippet_ref.is_empty() {
             // An escaped dollar sign
-            processed.push('$');
+            processed.push(b'$');
         } else if let Some(value) = glossary.get(snippet_ref) {
-            processed.push_str(value);
+            processed.extend(value.bytes());
         } else {
             let snippet = load_snippet(snippet_ref, base_dir, snippets)?;
-            processed.push_str(snippet);
+            processed.extend(snippet.bytes());
         }
     }
-    Ok(processed)
+    Ok(String::from_utf8(processed)?)
 }
 
 fn preprocess_rust_codeblocks(markdown: &str) -> Result<String, Error> {
-    let mut processed = String::with_capacity(markdown.len());
+    let mut processed = Vec::with_capacity(markdown.len());
     let mut chars = StrByteIterator::new(markdown);
     while let Some(ch) = chars.next() {
         match ch {
             b'`' => {
                 if chars.try_read("``rust") {
                     // Preprocess rust blocks in the same way that rustdoc does.
-                    processed.push_str("```rust");
-                    let rest_of_line = chars.read_line();
-                    processed.push_str(rest_of_line);
+                    processed.extend(b"```rust");
+                    let rest_of_line = chars.read_line()?;
+                    processed.extend(rest_of_line.bytes());
 
                     loop {
-                        let line = chars.read_line();
+                        let line = chars.read_line()?;
                         if line.is_empty() {
                             return Err(Error::MalformedCodeBlock);
                         }
                         let trimmed_start = line.trim_start();
                         if trimmed_start.starts_with("```") {
                             // Ends the code block
-                            processed.push_str(line);
+                            processed.extend(line.bytes());
                             break;
-                        } else if trimmed_start.starts_with('#') {
+                        } else if trimmed_start.starts_with("# ") {
                             // A rust-doc comment
                         } else {
-                            processed.push_str(line);
+                            processed.extend(line.bytes());
                         }
                     }
                 } else {
-                    processed.push(ch as char);
+                    processed.push(ch);
                 }
             }
             ch => {
-                processed.push(ch as char);
+                processed.push(ch);
             }
         }
     }
-    Ok(processed)
+    Ok(String::from_utf8(processed)?)
 }
 
 fn process_markdown(
@@ -209,15 +211,16 @@ fn load_snippet<'a>(
 }
 
 fn remove_shared_prefix(strings: &mut [&str]) {
-    if strings.is_empty() {
+    if strings.is_empty() || strings[0].is_empty() {
         return;
     }
 
     loop {
-        if strings[1..]
-            .iter()
-            .all(|string| !string.is_empty() && string[0..1] == strings[0][0..1])
-        {
+        if strings[1..].iter().all(|string| {
+            !string.is_empty()
+                && string.as_bytes()[0].is_ascii_whitespace()
+                && string[0..1] == strings[0][0..1]
+        }) {
             for string in strings.iter_mut() {
                 *string = &string[1..];
             }
@@ -269,16 +272,18 @@ fn load_snippets(
 }
 
 struct StrByteIterator<'a> {
-    remaining: &'a str,
+    remaining: &'a [u8],
 }
 
 impl<'a> StrByteIterator<'a> {
     pub const fn new(value: &'a str) -> Self {
-        Self { remaining: value }
+        Self {
+            remaining: value.as_bytes(),
+        }
     }
 
     pub fn try_read(&mut self, compare_against: &str) -> bool {
-        if self.remaining.starts_with(compare_against) {
+        if self.remaining.starts_with(compare_against.as_bytes()) {
             let (_, tail) = self.remaining.split_at(compare_against.len());
             self.remaining = tail;
             true
@@ -291,29 +296,31 @@ impl<'a> StrByteIterator<'a> {
         &mut self,
         mut cb: impl FnMut(u8) -> bool,
         include_last_byte: bool,
-    ) -> &'a str {
-        for (index, byte) in self.remaining.bytes().enumerate() {
-            if cb(byte) {
+    ) -> Result<&'a str, Error> {
+        for (index, byte) in self.remaining.iter().copied().enumerate() {
+            // Do not offer non-ascii characters to the callback. This could
+            // allow splitting inside of a unicode code point.
+            if byte < 128 && cb(byte) {
                 let (read, tail) = if include_last_byte {
                     self.remaining.split_at(index + 1)
                 } else {
                     self.remaining.split_at(index)
                 };
                 self.remaining = tail;
-                return read;
+                return Ok(std::str::from_utf8(read)?);
             }
         }
 
         let result = self.remaining;
-        self.remaining = "";
-        result
+        self.remaining = b"";
+        Ok(std::str::from_utf8(result)?)
     }
 
-    pub fn read_until_char(&mut self, ch: u8) -> &'a str {
+    pub fn read_until_char(&mut self, ch: u8) -> Result<&'a str, Error> {
         self.read_until(|byte| byte == ch, false)
     }
 
-    pub fn read_line(&mut self) -> &'a str {
+    pub fn read_line(&mut self) -> Result<&'a str, Error> {
         self.read_until(|ch| ch == b'\n', true)
     }
 }
@@ -327,7 +334,7 @@ impl<'a> Iterator for StrByteIterator<'a> {
         } else {
             let (next, tail) = self.remaining.split_at(1);
             self.remaining = tail;
-            next.as_bytes().get(0).copied()
+            next.get(0).copied()
         }
     }
 }
@@ -410,4 +417,19 @@ pub enum Error {
     /// An error requesting an Http resource.
     #[error("http error: {0}")]
     Http(#[from] ureq::Error),
+    /// An invalid Unicode byte sequence was encountered.
+    #[error("unicode error: {0}")]
+    Unicode(String),
+}
+
+impl From<Utf8Error> for Error {
+    fn from(err: Utf8Error) -> Self {
+        Self::Unicode(err.to_string())
+    }
+}
+
+impl From<FromUtf8Error> for Error {
+    fn from(err: FromUtf8Error) -> Self {
+        Self::Unicode(err.to_string())
+    }
 }
