@@ -696,13 +696,23 @@ impl From<FromUtf8Error> for Error {
     }
 }
 
+/// Generates all `RustMe` configurations found within the current directory.
+///
+/// ## Errors
+///
+/// - Returns any errors occurred processing an individual configuration.
+/// - Returns [`Error::NoConfiguration`] if no configurations were found.
+pub fn generate(release: bool) -> Result<(), Error> {
+    generate_in_directory(Path::new("."), release)
+}
+
 /// Generates all `RustMe` configurations found within `directory`.
 ///
 /// ## Errors
 ///
 /// - Returns any errors occurred processing an individual configuration.
 /// - Returns [`Error::NoConfiguration`] if no configurations were found.
-pub fn generate_in_directory(directory: &Path) -> Result<(), Error> {
+pub fn generate_in_directory(directory: &Path, release: bool) -> Result<(), Error> {
     let mut cache = Cache::default();
     let mut found_a_config = false;
     for entry in WalkDir::new(directory).into_iter().filter_map(Result::ok) {
@@ -717,10 +727,7 @@ pub fn generate_in_directory(directory: &Path) -> Result<(), Error> {
 
         println!("Processing {:?}", config_path);
         let config = Configuration::load(config_path)?;
-        config.generate_with_cache(
-            std::env::args().nth(1).as_deref() == Some("--release"),
-            &mut cache,
-        )?;
+        config.generate_with_cache(release, &mut cache)?;
     }
 
     if found_a_config {

@@ -1,11 +1,9 @@
-use std::path::Path;
-
-use crate::rustme::generate_in_directory;
+use crate::rustme::generate;
 
 pub mod rustme;
 
 fn main() {
-    if let Err(err) = generate_in_directory(Path::new(".")) {
+    if let Err(err) = generate(std::env::args().nth(1).as_deref() == Some("--release")) {
         eprintln!("{}", err);
         std::process::exit(1);
     }
