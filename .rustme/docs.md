@@ -37,5 +37,5 @@ the configuration file.
 ```rust
 # // This line will not show up in rustdoc or in the generated README.
 let config = rustme::Configuration::load("examples/basic/.rustme.ron").unwrap();
-config.generate().unwrap();
+config.generate(false).unwrap();
 ```

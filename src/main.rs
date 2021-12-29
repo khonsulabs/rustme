@@ -16,7 +16,7 @@ fn main() -> Result<(), rustme::Error> {
 
         println!("Processing {:?}", config_path);
         let config = Configuration::load(config_path)?;
-        config.generate()?;
+        config.generate(std::env::args().nth(1).as_deref() == Some("--release"))?;
     }
 
     Ok(())

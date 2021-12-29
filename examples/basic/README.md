@@ -8,7 +8,7 @@ This is the content section. You can also bring snippets inline:
 
 ```rust
 let config = rustme::Configuration::load("./examples/basic/.rustme.ron").unwrap();
-config.generate().unwrap();
+config.generate(false).unwrap();
 ```
 
 Additionally, glossaries can be used to include repeated values easily, such as

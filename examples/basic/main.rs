@@ -1,7 +1,7 @@
 pub fn main() {
     // begin rustme snippet: example
     let config = rustme::Configuration::load("./examples/basic/.rustme.ron").unwrap();
-    config.generate().unwrap();
+    config.generate(false).unwrap();
     // end rustme snippet
 }
 

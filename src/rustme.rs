@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, HashMap},
     fs,
     io::{ErrorKind, Write},
@@ -85,7 +86,7 @@ impl Configuration {
     ///
     /// Can return various errors that are encountred with files that could not
     /// be parsed.
-    pub fn generate(&self) -> Result<(), Error> {
+    pub fn generate(&self, release: bool) -> Result<(), Error> {
         let mut snippets = HashMap::new();
         let glossary = self.load_glossaries()?;
         for (name, file_config) in &self.files {
@@ -95,6 +96,14 @@ impl Configuration {
             }
 
             let file = File::from(file_config);
+
+            let glossary = if file.glossaries.is_empty() {
+                Cow::Borrowed(&glossary)
+            } else {
+                let mut combined_glossary = glossary.clone();
+                self.load_glossaries_into(&file.glossaries, &mut combined_glossary)?;
+                Cow::Owned(combined_glossary)
+            };
 
             let mut output = fs::File::create(&output_path)?;
             for (index, section) in file.sections.iter().enumerate() {
@@ -115,7 +124,10 @@ impl Configuration {
                     &self.relative_to,
                     &mut snippets,
                     &glossary,
-                    file.for_docs,
+                    Context {
+                        release,
+                        for_docs: file.for_docs,
+                    },
                 )?;
                 output.write_all(processed.as_bytes())?;
             }
@@ -127,33 +139,71 @@ impl Configuration {
     fn load_glossaries(&self) -> Result<HashMap<String, Term>, Error> {
         let mut combined = HashMap::new();
 
-        for glossary in &self.glossaries {
-            match glossary {
-                Glossary::External(reference) => {
-                    let glossary_text = if reference.contains("://") {
-                        ureq::get(reference)
-                            .set("User-Agent", "RustMe")
-                            .call()?
-                            .into_string()?
-                    } else {
-                        std::fs::read_to_string(self.relative_to.join(reference))?
-                    };
+        self.load_glossaries_into(&self.glossaries, &mut combined)?;
 
-                    let glossary = ron::from_str::<BTreeMap<String, Term>>(&glossary_text)?;
-                    for (key, value) in glossary {
-                        combined.insert(key, value);
-                    }
+        Ok(combined)
+    }
+
+    fn load_glossaries_into(
+        &self,
+        glossaries: &[Glossary],
+        combined: &mut HashMap<String, Term>,
+    ) -> Result<(), Error> {
+        for glossary in glossaries {
+            self.load_glossary_terms(glossary, combined)
+                .map_err(|err| Error::Glossary {
+                    location: glossary.location().to_string(),
+                    error: err.to_string(),
+                })?;
+        }
+
+        Ok(())
+    }
+
+    fn load_glossary_terms(
+        &self,
+        glossary: &Glossary,
+        combined: &mut HashMap<String, Term>,
+    ) -> Result<(), Error> {
+        match glossary {
+            Glossary::External(reference) => {
+                let glossary_text = if reference.contains("://") {
+                    ureq::get(reference)
+                        .set("User-Agent", "RustMe")
+                        .call()?
+                        .into_string()?
+                } else {
+                    std::fs::read_to_string(self.relative_to.join(reference))?
+                };
+
+                let glossary = ron::from_str::<BTreeMap<String, Term>>(&glossary_text)?;
+                for (key, value) in glossary {
+                    merge_term(combined, key, value);
                 }
-                Glossary::Inline(glossary) => {
-                    for (key, term) in glossary {
-                        combined.insert(key.to_string(), term.clone());
-                    }
+            }
+            Glossary::Inline(glossary) => {
+                for (key, term) in glossary {
+                    merge_term(combined, key.to_string(), term.clone());
                 }
             }
         }
 
-        Ok(combined)
+        Ok(())
     }
+}
+
+fn merge_term(combined: &mut HashMap<String, Term>, key: String, term: Term) {
+    if let Some(original_term) = combined.get_mut(&key) {
+        original_term.update_with(term);
+    } else {
+        combined.insert(key, term);
+    }
+}
+
+#[derive(Copy, Clone)]
+struct Context {
+    for_docs: bool,
+    release: bool,
 }
 
 fn replace_references(
@@ -161,7 +211,7 @@ fn replace_references(
     base_dir: &Path,
     snippets: &mut HashMap<String, String>,
     glossary: &HashMap<String, Term>,
-    for_docs: bool,
+    context: Context,
 ) -> Result<String, Error> {
     let mut processed = Vec::with_capacity(markdown.len());
     let mut chars = StrByteIterator::new(markdown);
@@ -184,7 +234,7 @@ fn replace_references(
             // An escaped dollar sign
             processed.push(b'$');
         } else if let Some(term) = glossary.get(snippet_ref) {
-            processed.extend(term.to_string(for_docs).bytes());
+            processed.extend(term.to_string(context).bytes());
         } else {
             let snippet = load_snippet(snippet_ref, base_dir, snippets)?;
             processed.extend(snippet.bytes());
@@ -238,9 +288,9 @@ fn process_markdown(
     base_dir: &Path,
     snippets: &mut HashMap<String, String>,
     glossary: &HashMap<String, Term>,
-    for_docs: bool,
+    context: Context,
 ) -> Result<String, Error> {
-    let expanded = replace_references(markdown, base_dir, snippets, glossary, for_docs)?;
+    let expanded = replace_references(markdown, base_dir, snippets, glossary, context)?;
     preprocess_rust_codeblocks(&expanded)
 }
 
@@ -288,7 +338,15 @@ fn load_snippets(
 ) -> Result<(), Error> {
     const SNIPPET_START: &str = "begin rustme snippet:";
     const SNIPPET_END: &str = "end rustme snippet";
-    let contents = std::fs::read_to_string(disk_path)?;
+    let contents = match std::fs::read_to_string(disk_path) {
+        Ok(contents) => contents,
+        Err(err) => {
+            if err.kind() == ErrorKind::NotFound {
+                return Err(Error::SnippetNotFound(ref_path.to_string()));
+            }
+            return Err(Error::from(err));
+        }
+    };
     let mut current_snippet = Vec::new();
     let mut current_snippet_name = None;
     for line in contents.lines() {
@@ -405,6 +463,15 @@ pub enum Glossary {
     Inline(HashMap<String, Term>),
 }
 
+impl Glossary {
+    fn location(&self) -> &str {
+        match self {
+            Glossary::External(location) => location,
+            Glossary::Inline(_) => "(inline)",
+        }
+    }
+}
+
 /// A [`Glossary`] value.
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(untagged)]
@@ -413,27 +480,66 @@ pub enum Term {
     Static(String),
     /// A term that has different values based on the output context.
     Conditional {
-        /// The value to be used basic output operations.
-        default: String,
         /// The value to be used when [`File::for_docs`] is true.
-        for_docs: String,
+        #[serde(default)]
+        for_docs: Option<String>,
+        /// The value to be used when outputting in release mode.
+        #[serde(default)]
+        release: Option<String>,
+        /// The value to be used basic output operations.
+        #[serde(default)]
+        default: Option<String>,
     },
 }
 
 impl Term {
-    /// Render the term, customizing the value if needed based on `for_docs`.
-    #[must_use]
-    pub fn to_string(&self, for_docs: bool) -> String {
+    fn update_with(&mut self, other: Self) {
+        *self = match (&self, other) {
+            (_, Term::Static(value)) => Self::Static(value),
+            (
+                Term::Static(value),
+                Term::Conditional {
+                    for_docs,
+                    release,
+                    default,
+                },
+            ) => Self::Conditional {
+                for_docs,
+                release,
+                default: default.or_else(|| Some(value.to_string())),
+            },
+            (
+                Term::Conditional {
+                    for_docs,
+                    release,
+                    default,
+                },
+                Term::Conditional {
+                    for_docs: other_for_docs,
+                    release: other_release,
+                    default: other_default,
+                },
+            ) => Self::Conditional {
+                for_docs: other_for_docs.or_else(|| for_docs.clone()),
+                release: other_release.or_else(|| release.clone()),
+                default: other_default.or_else(|| default.clone()),
+            },
+        }
+    }
+    fn to_string(&self, context: Context) -> String {
         match self {
             Term::Static(value) => value.clone(),
             Term::Conditional {
                 default,
+                release,
                 for_docs: for_docs_value,
             } => {
-                if for_docs {
-                    for_docs_value.clone()
+                if let (true, Some(value)) = (context.for_docs, for_docs_value) {
+                    value.clone()
+                } else if let (true, Some(value)) = (context.release, release) {
+                    value.clone()
                 } else {
-                    default.clone()
+                    default.clone().unwrap_or_default()
                 }
             }
         }
@@ -479,6 +585,7 @@ fn test_glossary() {
 
 /// All errors that `rustme` can return.
 #[derive(thiserror::Error, Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// A snippet reference is missing its closing `$`.
     #[error("A snippet reference is missing its closing $")]
@@ -510,6 +617,14 @@ pub enum Error {
     /// An invalid Unicode byte sequence was encountered.
     #[error("unicode error: {0}")]
     Unicode(String),
+    /// An error loading a glossary.
+    #[error("glossary {location} error: {error}")]
+    Glossary {
+        /// The location of the glossary.
+        location: String,
+        /// The error encountered.
+        error: String,
+    },
 }
 
 impl From<Utf8Error> for Error {
