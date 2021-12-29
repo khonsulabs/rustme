@@ -1,21 +1,23 @@
-use std::path::Path;
+use walkdir::WalkDir;
 
 use self::rustme::Configuration;
 
 pub mod rustme;
 
 fn main() -> Result<(), rustme::Error> {
-    let config = Configuration::load(config_path())?;
-    config.generate()?;
+    for entry in WalkDir::new(".").into_iter().filter_map(Result::ok) {
+        let config_path = if entry.file_name() == ".rustme.ron" {
+            entry.into_path()
+        } else if entry.file_type().is_dir() && entry.file_name() == ".rustme" {
+            entry.path().join("config.ron")
+        } else {
+            continue;
+        };
+
+        println!("Processing {:?}", config_path);
+        let config = Configuration::load(config_path)?;
+        config.generate()?;
+    }
 
     Ok(())
-}
-
-fn config_path() -> &'static Path {
-    let current_dir_path = Path::new(".rustme.ron");
-    if current_dir_path.exists() {
-        current_dir_path
-    } else {
-        Path::new(".rustme/config.ron")
-    }
 }

@@ -7,8 +7,8 @@ Configuration(
         ],
     },
     glossaries: [
-        Inline({
+        {
             "HOMEPAGE": "https://khonsulabs.com/"
-        })
+        }
     ],
 )

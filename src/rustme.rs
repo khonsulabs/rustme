@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    fs::File,
+    fs,
     io::{ErrorKind, Write},
     path::{Path, PathBuf},
     str::Utf8Error,
@@ -16,8 +16,45 @@ pub struct Configuration {
     #[serde(skip)]
     pub relative_to: PathBuf,
     /// The collection of files (key) and sections (values).
-    pub files: HashMap<String, Vec<String>>,
+    pub files: HashMap<String, FileConfiguration>,
     /// A list of glossaries that act as a source of snippets.
+    #[serde(default)]
+    pub glossaries: Vec<Glossary>,
+}
+
+/// A configuration for a [`File`].
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(untagged)]
+pub enum FileConfiguration {
+    /// An inline file configuration, which is just a list of sections.
+    Sections(Vec<String>),
+    /// A full file configuration.
+    File(File),
+}
+
+impl<'a> From<&'a FileConfiguration> for File {
+    fn from(config: &'a FileConfiguration) -> Self {
+        match config {
+            FileConfiguration::Sections(sections) => Self {
+                sections: sections.clone(),
+                ..Self::default()
+            },
+            FileConfiguration::File(file) => file.clone(),
+        }
+    }
+}
+
+/// A `RustMe` file configuration.
+#[derive(Deserialize, Serialize, Debug, Default, Clone)]
+pub struct File {
+    /// If true, the output is considered for `cargo doc`.
+    #[serde(default)]
+    pub for_docs: bool,
+    /// A list of sections that compose this file.
+    pub sections: Vec<String>,
+    /// A list of glossaries that are used for this file. Any [`Term`]s defined
+    /// in these glossaries will have a higher precedence than the ones defined
+    /// at the [`Configuration`] level.
     #[serde(default)]
     pub glossaries: Vec<Glossary>,
 }
@@ -51,14 +88,16 @@ impl Configuration {
     pub fn generate(&self) -> Result<(), Error> {
         let mut snippets = HashMap::new();
         let glossary = self.load_glossaries()?;
-        for (name, sections) in &self.files {
+        for (name, file_config) in &self.files {
             let output_path = self.relative_to.join(name);
             if output_path.exists() {
                 std::fs::remove_file(&output_path)?;
             }
 
-            let mut output = File::create(&output_path)?;
-            for (index, section) in sections.iter().enumerate() {
+            let file = File::from(file_config);
+
+            let mut output = fs::File::create(&output_path)?;
+            for (index, section) in file.sections.iter().enumerate() {
                 if index > 0 {
                     output.write_all(b"\n")?;
                 }
@@ -71,8 +110,13 @@ impl Configuration {
                 } else {
                     std::fs::read_to_string(self.relative_to.join(section))?
                 };
-                let processed =
-                    process_markdown(&markdown, &self.relative_to, &mut snippets, &glossary)?;
+                let processed = process_markdown(
+                    &markdown,
+                    &self.relative_to,
+                    &mut snippets,
+                    &glossary,
+                    file.for_docs,
+                )?;
                 output.write_all(processed.as_bytes())?;
             }
         }
@@ -80,24 +124,29 @@ impl Configuration {
         Ok(())
     }
 
-    fn load_glossaries(&self) -> Result<HashMap<String, String>, Error> {
+    fn load_glossaries(&self) -> Result<HashMap<String, Term>, Error> {
         let mut combined = HashMap::new();
 
         for glossary in &self.glossaries {
             match glossary {
-                Glossary::External(url) => {
-                    let glossary_text = ureq::get(url)
-                        .set("User-Agent", "RustMe")
-                        .call()?
-                        .into_string()?;
-                    let glossary = ron::from_str::<BTreeMap<String, String>>(&glossary_text)?;
+                Glossary::External(reference) => {
+                    let glossary_text = if reference.contains("://") {
+                        ureq::get(reference)
+                            .set("User-Agent", "RustMe")
+                            .call()?
+                            .into_string()?
+                    } else {
+                        std::fs::read_to_string(self.relative_to.join(reference))?
+                    };
+
+                    let glossary = ron::from_str::<BTreeMap<String, Term>>(&glossary_text)?;
                     for (key, value) in glossary {
                         combined.insert(key, value);
                     }
                 }
                 Glossary::Inline(glossary) => {
-                    for (key, value) in glossary {
-                        combined.insert(key.to_string(), value.to_string());
+                    for (key, term) in glossary {
+                        combined.insert(key.to_string(), term.clone());
                     }
                 }
             }
@@ -111,7 +160,8 @@ fn replace_references(
     markdown: &str,
     base_dir: &Path,
     snippets: &mut HashMap<String, String>,
-    glossary: &HashMap<String, String>,
+    glossary: &HashMap<String, Term>,
+    for_docs: bool,
 ) -> Result<String, Error> {
     let mut processed = Vec::with_capacity(markdown.len());
     let mut chars = StrByteIterator::new(markdown);
@@ -133,8 +183,8 @@ fn replace_references(
         if snippet_ref.is_empty() {
             // An escaped dollar sign
             processed.push(b'$');
-        } else if let Some(value) = glossary.get(snippet_ref) {
-            processed.extend(value.bytes());
+        } else if let Some(term) = glossary.get(snippet_ref) {
+            processed.extend(term.to_string(for_docs).bytes());
         } else {
             let snippet = load_snippet(snippet_ref, base_dir, snippets)?;
             processed.extend(snippet.bytes());
@@ -187,9 +237,10 @@ fn process_markdown(
     markdown: &str,
     base_dir: &Path,
     snippets: &mut HashMap<String, String>,
-    glossary: &HashMap<String, String>,
+    glossary: &HashMap<String, Term>,
+    for_docs: bool,
 ) -> Result<String, Error> {
-    let expanded = replace_references(markdown, base_dir, snippets, glossary)?;
+    let expanded = replace_references(markdown, base_dir, snippets, glossary, for_docs)?;
     preprocess_rust_codeblocks(&expanded)
 }
 
@@ -268,6 +319,9 @@ fn load_snippets(
         }
     }
 
+    // Allow referring to an entire file as a snippet.
+    snippets.insert(ref_path.to_string(), contents);
+
     Ok(())
 }
 
@@ -341,13 +395,49 @@ impl<'a> Iterator for StrByteIterator<'a> {
 
 /// A mapping of replacements that can be used within the files using `$name$`
 /// syntax.
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(untagged)]
 pub enum Glossary {
     /// An external glossary. The contained value should be a valid Url to a
     /// Ron-encoded `HashMap<String, String>`.
     External(String),
     /// An inline glossary.
-    Inline(HashMap<String, String>),
+    Inline(HashMap<String, Term>),
+}
+
+/// A [`Glossary`] value.
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum Term {
+    /// A term that is the same value in all contexts.
+    Static(String),
+    /// A term that has different values based on the output context.
+    Conditional {
+        /// The value to be used basic output operations.
+        default: String,
+        /// The value to be used when [`File::for_docs`] is true.
+        for_docs: String,
+    },
+}
+
+impl Term {
+    /// Render the term, customizing the value if needed based on `for_docs`.
+    #[must_use]
+    pub fn to_string(&self, for_docs: bool) -> String {
+        match self {
+            Term::Static(value) => value.clone(),
+            Term::Conditional {
+                default,
+                for_docs: for_docs_value,
+            } => {
+                if for_docs {
+                    for_docs_value.clone()
+                } else {
+                    default.clone()
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -376,9 +466,9 @@ fn test_glossary() {
                 "OTHERREADME.md": ["a", "b"],
             },
             glossaries: [
-                Inline({
+                {
                     "TEST": "SUCCESS",
-                })
+                }
             ]
         )
         "#,
