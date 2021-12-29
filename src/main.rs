@@ -1,27 +1,12 @@
-use walkdir::WalkDir;
+use std::path::Path;
 
-use self::rustme::{Cache, Configuration};
+use crate::rustme::generate_in_directory;
 
 pub mod rustme;
 
-fn main() -> Result<(), rustme::Error> {
-    let mut cache = Cache::default();
-    for entry in WalkDir::new(".").into_iter().filter_map(Result::ok) {
-        let config_path = if entry.file_name() == ".rustme.ron" {
-            entry.into_path()
-        } else if entry.file_type().is_dir() && entry.file_name() == ".rustme" {
-            entry.path().join("config.ron")
-        } else {
-            continue;
-        };
-
-        println!("Processing {:?}", config_path);
-        let config = Configuration::load(config_path)?;
-        config.generate_with_cache(
-            std::env::args().nth(1).as_deref() == Some("--release"),
-            &mut cache,
-        )?;
+fn main() {
+    if let Err(err) = generate_in_directory(Path::new(".")) {
+        eprintln!("{}", err);
+        std::process::exit(1);
     }
-
-    Ok(())
 }

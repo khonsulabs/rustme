@@ -9,6 +9,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use walkdir::WalkDir;
 
 /// A configuration of how to generate one or more READMEs.
 #[derive(Deserialize, Serialize, Debug)]
@@ -640,6 +641,9 @@ fn test_glossary() {
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
+    /// No configuration was found.
+    #[error("no configuration found")]
+    NoConfiguration,
     /// A snippet reference is missing its closing `$`.
     #[error("A snippet reference is missing its closing $")]
     MalformedSnippetReference,
@@ -689,5 +693,39 @@ impl From<Utf8Error> for Error {
 impl From<FromUtf8Error> for Error {
     fn from(err: FromUtf8Error) -> Self {
         Self::Unicode(err.to_string())
+    }
+}
+
+/// Generates all `RustMe` configurations found within `directory`.
+///
+/// ## Errors
+///
+/// - Returns any errors occurred processing an individual configuration.
+/// - Returns [`Error::NoConfiguration`] if no configurations were found.
+pub fn generate_in_directory(directory: &Path) -> Result<(), Error> {
+    let mut cache = Cache::default();
+    let mut found_a_config = false;
+    for entry in WalkDir::new(directory).into_iter().filter_map(Result::ok) {
+        let config_path = if entry.file_name() == ".rustme.ron" {
+            entry.into_path()
+        } else if entry.file_type().is_dir() && entry.file_name() == ".rustme" {
+            entry.path().join("config.ron")
+        } else {
+            continue;
+        };
+        found_a_config = true;
+
+        println!("Processing {:?}", config_path);
+        let config = Configuration::load(config_path)?;
+        config.generate_with_cache(
+            std::env::args().nth(1).as_deref() == Some("--release"),
+            &mut cache,
+        )?;
+    }
+
+    if found_a_config {
+        Ok(())
+    } else {
+        Err(Error::NoConfiguration)
     }
 }
