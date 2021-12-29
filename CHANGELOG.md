@@ -27,12 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ],
   ```
 
-### Changes
+### Added
 
-- `Configuration::files` can now be configured with a `File`, allowing more
-  options for each file.
-- Introduced a `Term`, allowing a value in a `Glossary` to be customized based
-  on context.
 - Added `File::for_docs`, which enables rendering glossary terms with different
   values when the output is for `cargo doc`. A reason to use this feature would
   be to link to `docs.rs` in a README, but use the internal docs links when
@@ -43,6 +39,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   being generated. A documentation link in one crate might be able to be an
   inline reference, while in most crates, the default behavior should link to
   `docs.rs`.
+- `Configuration::generate_with_cache` provides a way to ensure resources are
+  only loaded once across multiple calls to generate.
+
+### Changes
+
+- `Configuration::files` can now be configured with a `File`, allowing more
+  options for each file.
+- Introduced a `Term`, allowing a value in a `Glossary` to be customized based
+  on context.
 - `Configuration::generate` now takes a boolean parameter denoting whether the
   files are being generated for release. The command-line option is `--release`.
   Terms will use the `release` value instead of the `default` value.

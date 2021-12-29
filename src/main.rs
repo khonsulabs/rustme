@@ -1,10 +1,11 @@
 use walkdir::WalkDir;
 
-use self::rustme::Configuration;
+use self::rustme::{Cache, Configuration};
 
 pub mod rustme;
 
 fn main() -> Result<(), rustme::Error> {
+    let mut cache = Cache::default();
     for entry in WalkDir::new(".").into_iter().filter_map(Result::ok) {
         let config_path = if entry.file_name() == ".rustme.ron" {
             entry.into_path()
@@ -16,7 +17,10 @@ fn main() -> Result<(), rustme::Error> {
 
         println!("Processing {:?}", config_path);
         let config = Configuration::load(config_path)?;
-        config.generate(std::env::args().nth(1).as_deref() == Some("--release"))?;
+        config.generate_with_cache(
+            std::env::args().nth(1).as_deref() == Some("--release"),
+            &mut cache,
+        )?;
     }
 
     Ok(())

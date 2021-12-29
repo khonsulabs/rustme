@@ -87,8 +87,18 @@ impl Configuration {
     /// Can return various errors that are encountred with files that could not
     /// be parsed.
     pub fn generate(&self, release: bool) -> Result<(), Error> {
+        self.generate_with_cache(release, &mut Cache::default())
+    }
+
+    /// Generates the README files using `cache` to load glossaries and snippets.
+    ///
+    /// # Errors
+    ///
+    /// Can return various errors that are encountred with files that could not
+    /// be parsed.
+    pub fn generate_with_cache(&self, release: bool, cache: &mut Cache) -> Result<(), Error> {
         let mut snippets = HashMap::new();
-        let glossary = self.load_glossaries()?;
+        let glossary = self.load_glossaries(cache)?;
         for (name, file_config) in &self.files {
             let output_path = self.relative_to.join(name);
             if output_path.exists() {
@@ -101,7 +111,7 @@ impl Configuration {
                 Cow::Borrowed(&glossary)
             } else {
                 let mut combined_glossary = glossary.clone();
-                self.load_glossaries_into(&file.glossaries, &mut combined_glossary)?;
+                self.load_glossaries_into(&file.glossaries, &mut combined_glossary, cache)?;
                 Cow::Owned(combined_glossary)
             };
 
@@ -110,15 +120,9 @@ impl Configuration {
                 if index > 0 {
                     output.write_all(b"\n")?;
                 }
-                let markdown = if section.starts_with("http://") || section.starts_with("https://")
-                {
-                    ureq::get(section)
-                        .set("User-Agent", "RustMe")
-                        .call()?
-                        .into_string()?
-                } else {
-                    std::fs::read_to_string(self.relative_to.join(section))?
-                };
+                let markdown = cache.get(section, &self.relative_to, || {
+                    Error::SnippetNotFound(section.to_string())
+                })?;
                 let processed = process_markdown(
                     &markdown,
                     &self.relative_to,
@@ -136,10 +140,10 @@ impl Configuration {
         Ok(())
     }
 
-    fn load_glossaries(&self) -> Result<HashMap<String, Term>, Error> {
+    fn load_glossaries(&self, cache: &mut Cache) -> Result<HashMap<String, Term>, Error> {
         let mut combined = HashMap::new();
 
-        self.load_glossaries_into(&self.glossaries, &mut combined)?;
+        self.load_glossaries_into(&self.glossaries, &mut combined, cache)?;
 
         Ok(combined)
     }
@@ -148,9 +152,10 @@ impl Configuration {
         &self,
         glossaries: &[Glossary],
         combined: &mut HashMap<String, Term>,
+        cache: &mut Cache,
     ) -> Result<(), Error> {
         for glossary in glossaries {
-            self.load_glossary_terms(glossary, combined)
+            self.load_glossary_terms(glossary, combined, cache)
                 .map_err(|err| Error::Glossary {
                     location: glossary.location().to_string(),
                     error: err.to_string(),
@@ -164,17 +169,15 @@ impl Configuration {
         &self,
         glossary: &Glossary,
         combined: &mut HashMap<String, Term>,
+        cache: &mut Cache,
     ) -> Result<(), Error> {
         match glossary {
             Glossary::External(reference) => {
-                let glossary_text = if reference.contains("://") {
-                    ureq::get(reference)
-                        .set("User-Agent", "RustMe")
-                        .call()?
-                        .into_string()?
-                } else {
-                    std::fs::read_to_string(self.relative_to.join(reference))?
-                };
+                let glossary_text =
+                    cache.get(reference, &self.relative_to, || Error::Glossary {
+                        location: reference.to_string(),
+                        error: String::from("not found"),
+                    })?;
 
                 let glossary = ron::from_str::<BTreeMap<String, Term>>(&glossary_text)?;
                 for (key, value) in glossary {
@@ -197,6 +200,55 @@ fn merge_term(combined: &mut HashMap<String, Term>, key: String, term: Term) {
         original_term.update_with(term);
     } else {
         combined.insert(key, term);
+    }
+}
+
+/// A cache for loading snippets and glossaries.
+#[derive(Default)]
+pub struct Cache(HashMap<CacheKey, String>);
+
+#[derive(Hash, Eq, PartialEq)]
+enum CacheKey {
+    Path(PathBuf),
+    Url(String),
+}
+
+impl Cache {
+    fn get(
+        &mut self,
+        resource: &str,
+        relative_to: &Path,
+        not_found: impl FnOnce() -> Error,
+    ) -> Result<String, Error> {
+        let cache_key = if resource.starts_with("http://") || resource.starts_with("https://") {
+            CacheKey::Url(resource.to_string())
+        } else {
+            CacheKey::Path(relative_to.join(resource))
+        };
+        if let Some(existing_value) = self.0.get(&cache_key) {
+            Ok(existing_value.clone())
+        } else {
+            let contents = match &cache_key {
+                CacheKey::Path(resource_path) => match std::fs::read_to_string(&resource_path) {
+                    Ok(contents) => contents,
+                    Err(err) => {
+                        if err.kind() == ErrorKind::NotFound {
+                            return Err(not_found());
+                        }
+                        return Err(Error::from(err));
+                    }
+                },
+                CacheKey::Url(url) => {
+                    println!("Requesting {}", url);
+                    ureq::get(url)
+                        .set("User-Agent", "RustMe")
+                        .call()?
+                        .into_string()?
+                }
+            };
+            self.0.insert(cache_key, contents.clone());
+            Ok(contents)
+        }
     }
 }
 
