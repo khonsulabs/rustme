@@ -690,6 +690,7 @@
 <span id="690">690</span>
 <span id="691">691</span>
 <span id="692">692</span>
+<span id="693">693</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="ident">std</span>::{
     <span class="ident">borrow::Cow</span>,
     <span class="ident">collections</span>::{<span class="ident">BTreeMap</span>, <span class="ident">HashMap</span>},
@@ -932,10 +933,11 @@
                 },
                 <span class="ident">CacheKey::Url</span>(<span class="ident">url</span>) =&gt; {
                     <span class="macro">println!</span>(<span class="string">&quot;Requesting {}&quot;</span>, <span class="ident">url</span>);
-                    <span class="ident">ureq::get</span>(<span class="ident">url</span>)
-                        .<span class="ident">set</span>(<span class="string">&quot;User-Agent&quot;</span>, <span class="string">&quot;RustMe&quot;</span>)
-                        .<span class="ident">call</span>()<span class="question-mark">?</span>
-                        .<span class="ident">into_string</span>()<span class="question-mark">?</span>
+                    <span class="kw">match</span> <span class="ident">ureq::get</span>(<span class="ident">url</span>).<span class="ident">set</span>(<span class="string">&quot;User-Agent&quot;</span>, <span class="string">&quot;RustMe&quot;</span>).<span class="ident">call</span>() {
+                        <span class="prelude-val">Ok</span>(<span class="ident">response</span>) =&gt; <span class="ident">response</span>.<span class="ident">into_string</span>()<span class="question-mark">?</span>,
+                        <span class="prelude-val">Err</span>(<span class="ident">ureq::Error::Status</span>(<span class="ident">code</span>, <span class="kw">_</span>)) <span class="kw">if</span> <span class="ident">code</span> <span class="op">==</span> <span class="number">404</span> =&gt; <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">not_found</span>()),
+                        <span class="prelude-val">Err</span>(<span class="ident">err</span>) =&gt; <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">Error::from</span>(<span class="ident">err</span>)),
+                    }
                 }
             };
             <span class="self">self</span>.<span class="number">0</span>.<span class="ident">insert</span>(<span class="ident">cache_key</span>, <span class="ident">contents</span>.<span class="ident">clone</span>());
