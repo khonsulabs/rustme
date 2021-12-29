@@ -38,7 +38,7 @@ the configuration file.
 
 ```rust
 let config = rustme::Configuration::load("examples/basic/.rustme.ron").unwrap();
-config.generate().unwrap();
+config.generate(false).unwrap();
 ```
 
 ## This is a `rustme`
