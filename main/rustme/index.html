@@ -26,21 +26,24 @@ repository.</li>
 </ul>
 </li>
 </ul>
-<h2 id="rustme-command-line-interface" class="section-header"><a href="#rustme-command-line-interface"><code>rustme</code> command line interface</a></h2>
+<h3 id="rustme-command-line-interface" class="section-header"><a href="#rustme-command-line-interface"><code>rustme</code> command line interface</a></h3>
 <p>To install, simply run <code>cargo install rustme</code>.</p>
 <p>Currently <code>rustme</code> ignores all command line arguments. It looks for a
 <a href="https://github.com/ron-rs/ron">Ron</a>-formatted <code>Configuration</code> located in either
 <code>./rustme.ron</code> or <code>./.rustme/config.ron</code>, and generates the files relative to
 the configuration file.</p>
-<h2 id="rustme-as-a-library" class="section-header"><a href="#rustme-as-a-library"><code>rustme</code> as a library</a></h2>
+<h3 id="rustme-as-a-library" class="section-header"><a href="#rustme-as-a-library"><code>rustme</code> as a library</a></h3>
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let</span> <span class="ident">config</span> <span class="op">=</span> <span class="ident">rustme::Configuration::load</span>(<span class="string">&quot;examples/basic/.rustme.ron&quot;</span>).<span class="ident">unwrap</span>();
 <span class="ident">config</span>.<span class="ident">generate</span>().<span class="ident">unwrap</span>();</code></pre></div>
 </div></details><h2 id="structs" class="section-header"><a href="#structs">Structs</a></h2>
-<div class="item-table"><div class="item-left module-item"><a class="struct" href="struct.Configuration.html" title="rustme::Configuration struct">Configuration</a></div><div class="item-right docblock-short"><p>A configuration of how to generate one or more READMEs.</p>
-</div></div><h2 id="enums" class="section-header"><a href="#enums">Enums</a></h2>
-<div class="item-table"><div class="item-left module-item"><a class="enum" href="enum.Error.html" title="rustme::Error enum">Error</a></div><div class="item-right docblock-short"><p>All errors that <code>rustme</code> can return.</p>
-</div><div class="item-left module-item"><a class="enum" href="enum.Glossary.html" title="rustme::Glossary enum">Glossary</a></div><div class="item-right docblock-short"><p>A mapping of replacements that can be used within the files using <code>$name$</code>
+<div class="item-table"><div class="item-row"><div class="item-left module-item"><a class="struct" href="struct.Configuration.html" title="rustme::Configuration struct">Configuration</a></div><div class="item-right docblock-short"><p>A configuration of how to generate one or more READMEs.</p>
+</div></div><div class="item-row"><div class="item-left module-item"><a class="struct" href="struct.File.html" title="rustme::File struct">File</a></div><div class="item-right docblock-short"><p>A <code>RustMe</code> file configuration.</p>
+</div></div></div><h2 id="enums" class="section-header"><a href="#enums">Enums</a></h2>
+<div class="item-table"><div class="item-row"><div class="item-left module-item"><a class="enum" href="enum.Error.html" title="rustme::Error enum">Error</a></div><div class="item-right docblock-short"><p>All errors that <code>rustme</code> can return.</p>
+</div></div><div class="item-row"><div class="item-left module-item"><a class="enum" href="enum.FileConfiguration.html" title="rustme::FileConfiguration enum">FileConfiguration</a></div><div class="item-right docblock-short"><p>A configuration for a <a href="struct.File.html" title="File"><code>File</code></a>.</p>
+</div></div><div class="item-row"><div class="item-left module-item"><a class="enum" href="enum.Glossary.html" title="rustme::Glossary enum">Glossary</a></div><div class="item-right docblock-short"><p>A mapping of replacements that can be used within the files using <code>$name$</code>
 syntax.</p>
-</div></div></section><section id="search" class="content hidden"></section><div id="rustdoc-vars" data-root-path="../" data-current-crate="rustme" data-search-index-js="../search-index.js" data-search-js="../search.js"></div>
+</div></div><div class="item-row"><div class="item-left module-item"><a class="enum" href="enum.Term.html" title="rustme::Term enum">Term</a></div><div class="item-right docblock-short"><p>A <a href="enum.Glossary.html" title="Glossary"><code>Glossary</code></a> value.</p>
+</div></div></div></section><section id="search" class="content hidden"></section><div id="rustdoc-vars" data-root-path="../" data-current-crate="rustme" data-search-index-js="../search-index.js" data-search-js="../search.js"></div>
     <script src="../main.js"></script>
 </body></html>
