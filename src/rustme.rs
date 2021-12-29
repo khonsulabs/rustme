@@ -240,10 +240,11 @@ impl Cache {
                 },
                 CacheKey::Url(url) => {
                     println!("Requesting {}", url);
-                    ureq::get(url)
-                        .set("User-Agent", "RustMe")
-                        .call()?
-                        .into_string()?
+                    match ureq::get(url).set("User-Agent", "RustMe").call() {
+                        Ok(response) => response.into_string()?,
+                        Err(ureq::Error::Status(code, _)) if code == 404 => return Err(not_found()),
+                        Err(err) => return Err(Error::from(err)),
+                    }
                 }
             };
             self.0.insert(cache_key, contents.clone());
