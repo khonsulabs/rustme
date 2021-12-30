@@ -715,7 +715,18 @@ pub fn generate(release: bool) -> Result<(), Error> {
 pub fn generate_in_directory(directory: &Path, release: bool) -> Result<(), Error> {
     let mut cache = Cache::default();
     let mut found_a_config = false;
+    let initial_depth = directory.components().count();
     for entry in WalkDir::new(directory).into_iter().filter_map(Result::ok) {
+        if entry
+            .path()
+            .components()
+            .nth(initial_depth)
+            .map(|c| c.as_os_str() == "target")
+            .unwrap_or_default()
+        {
+            continue;
+        }
+
         let config_path = if entry.file_name() == ".rustme.ron" {
             entry.into_path()
         } else if entry.file_type().is_dir() && entry.file_name() == ".rustme" {
