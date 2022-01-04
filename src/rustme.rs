@@ -372,17 +372,35 @@ fn remove_shared_prefix(strings: &mut [&str]) {
 
     loop {
         if strings[1..].iter().all(|string| {
-            !string.is_empty()
-                && string.as_bytes()[0].is_ascii_whitespace()
-                && string[0..1] == strings[0][0..1]
+            string.is_empty()
+                || (string.as_bytes()[0].is_ascii_whitespace() && string[0..1] == strings[0][0..1])
         }) {
             for string in strings.iter_mut() {
-                *string = &string[1..];
+                if !string.is_empty() {
+                    *string = &string[1..];
+                }
             }
         } else {
             break;
         }
     }
+}
+
+#[test]
+fn remove_shared_prefix_tests() {
+    let mut strings = [" a", " b", " c"];
+    remove_shared_prefix(&mut strings);
+    assert_eq!(strings, ["a", "b", "c"]);
+
+    // No trimming
+    let mut strings = [" a", " b", "c"];
+    remove_shared_prefix(&mut strings);
+    assert_eq!(strings, [" a", " b", "c"]);
+
+    // Trimming with blank lines
+    let mut strings = [" a", "", " b", " c"];
+    remove_shared_prefix(&mut strings);
+    assert_eq!(strings, ["a", "", "b", "c"]);
 }
 
 fn load_snippets(
